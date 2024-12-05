@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <limits>
+#include <functional>
 #include "ssh_client.h"
 #include "command_manager.h"
 #include "logger.h"
@@ -33,71 +34,130 @@ void printHeader() {
               << RESET;
 }
 
+// Função genérica para limpar o buffer de entrada
+void clearInput() {
+    std::cin.clear();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+}
+
+// Função genérica para validação de entrada
+template <typename T>
+T getValidatedInput(const std::string& prompt, const std::function<bool(T)>& validate, const std::string& errorMessage) {
+    T value;
+    while (true) {
+        std::cout << prompt;
+        std::cin >> value;
+
+        if (std::cin.fail()) {
+            clearInput();
+            std::cout << RED "Entrada inválida. Tente novamente.\n" RESET;
+        } else if (!validate(value)) {
+            clearInput();
+            std::cout << RED << errorMessage << RESET << "\n";
+        } else {
+            clearInput();
+            return value;
+        }
+    }
+}
+
+// Sobrecarga para capturar strings
+std::string getValidatedInput(const std::string& prompt, const std::function<bool(const std::string&)>& validate, const std::string& errorMessage) {
+    std::string value;
+    while (true) {
+        std::cout << prompt;
+        std::getline(std::cin, value);
+
+        if (validate(value)) {
+            return value;
+        } else {
+            std::cout << RED << errorMessage << RESET << "\n";
+        }
+    }
+}
+
 int main() {
     printHeader();
     slowPrint(GREEN "Bem-vindo ao Sistema de Automação de Configuração de Rede!\n\n" RESET, 30);
 
-    char continueRunning = 'Y'; // Controle do loop
+    char continueRunning = 'Y';
 
     while (toupper(continueRunning) == 'Y') {
-        // Entrada de dados do usuário
-        std::string ip, username, password, deviceName, authMethod, keyPath;
-        int port = 22;  // Porta padrão para SSH
-        int timeout = 30; // Timeout padrão (segundos)
+        // Captura IP
+        std::string ip = getValidatedInput<std::string>(
+            CYAN "IP do dispositivo: " RESET,
+            [](const std::string& value) { return !value.empty(); },
+            "O IP não pode estar vazio."
+        );
 
-        std::cout << CYAN "IP do dispositivo: " RESET;
-        std::cin >> ip;
+        // Captura Porta
+        int port = getValidatedInput<int>(
+            CYAN "Porta (padrão: 22): " RESET,
+            [](int value) { return value > 0 && value <= 65535; },
+            "A porta deve ser um número entre 1 e 65535."
+        );
 
-        std::cout << CYAN "Porta (padrão: 22): " RESET;
-        std::cin >> port;
+        // Nome do dispositivo (opcional)
+        std::string deviceName = getValidatedInput<std::string>(
+            CYAN "Nome do dispositivo (opcional): " RESET,
+            [](const std::string&) { return true; },  // Sempre válido
+            ""
+        );
 
-        std::cout << CYAN "Nome do dispositivo (opcional): " RESET;
-        std::cin.ignore(); // Limpa o buffer antes do getline
-        std::getline(std::cin, deviceName);
+        // Timeout
+        int timeout = getValidatedInput<int>(
+            CYAN "Timeout de conexão (segundos, padrão: 30): " RESET,
+            [](int value) { return value > 0; },
+            "O timeout deve ser um número positivo."
+        );
 
-        std::cout << CYAN "Timeout de conexão (segundos, padrão: 30): " RESET;
-        std::cin >> timeout;
+        // Método de autenticação
+        std::string authMethod = getValidatedInput<std::string>(
+            CYAN "Método de autenticação (senha/chave): " RESET,
+            [](const std::string& value) { return value == "senha" || value == "chave"; },
+            "O método de autenticação deve ser 'senha' ou 'chave'."
+        );
 
-        std::cout << CYAN "Método de autenticação (senha/chave): " RESET;
-        std::cin >> authMethod;
-
+        // Captura Usuário e Credenciais
+        std::string username, password, keyPath;
         if (authMethod == "senha") {
-            std::cout << CYAN "Usuário: " RESET;
-            std::cin >> username;
-
-            std::cout << CYAN "Senha: " RESET;
-            std::cin >> password;
+            username = getValidatedInput<std::string>(
+                CYAN "Usuário: " RESET,
+                [](const std::string& value) { return !value.empty(); },
+                "O usuário não pode estar vazio."
+            );
+            password = getValidatedInput<std::string>(
+                CYAN "Senha: " RESET,
+                [](const std::string& value) { return !value.empty(); },
+                "A senha não pode estar vazia."
+            );
         } else if (authMethod == "chave") {
-            std::cout << CYAN "Usuário: " RESET;
-            std::cin >> username;
-
-            std::cout << CYAN "Caminho para a chave SSH: " RESET;
-            std::cin >> keyPath;
-        } else {
-            std::cerr << RED "Método de autenticação inválido.\n" RESET;
-            continue;
+            username = getValidatedInput<std::string>(
+                CYAN "Usuário: " RESET,
+                [](const std::string& value) { return !value.empty(); },
+                "O usuário não pode estar vazio."
+            );
+            keyPath = getValidatedInput<std::string>(
+                CYAN "Caminho para a chave SSH: " RESET,
+                [](const std::string& value) { return !value.empty(); },
+                "O caminho para a chave SSH não pode estar vazio."
+            );
         }
 
-        // Exibe opções de tarefa
-        slowPrint("\nEscolha uma tarefa:\n", 30);
-        std::cout << BOLD << BLUE
-                  << "1. Configurar VLAN\n"
-                  << "2. Configurar Rota Estática\n"
-                  << "3. Fazer Backup de Configuração\n"
-                  << RESET;
-        std::cout << CYAN "Opção: " RESET;
-        int option;
-        std::cin >> option;
+        // Escolha de tarefa
+        int option = getValidatedInput<int>(
+            BOLD + std::string(BLUE "1. Configurar VLAN\n"
+                                   "2. Configurar Rota Estática\n"
+                                   "3. Fazer Backup de Configuração\n"
+                                   CYAN "Opção: " RESET),
+            [](int value) { return value >= 1 && value <= 3; },
+            "Escolha inválida. Por favor, escolha 1, 2 ou 3."
+        );
 
-        // Obtém o comando
+        // Obtém comando e executa
         std::string command = CommandManager::getTask(option);
-        if (command.empty()) {
-            std::cout << RED "Opção inválida. Tente novamente.\n" RESET;
-            continue;
-        }
-
-        // Configuração do cliente SSH
         SSHClient client(ip, username, password, port, timeout, keyPath);
+
         slowPrint("\nTentando conectar ao dispositivo...\n", 50);
         if (!client.connect()) {
             Logger::log("Erro ao conectar ao dispositivo: " + ip);
@@ -110,7 +170,7 @@ int main() {
         if (client.executeCommand(command, output)) {
             std::cout << GREEN "\nComando executado com sucesso!\n" RESET;
             std::cout << YELLOW "Saída:\n" RESET << output << "\n";
-            Logger::log("Tarefa executada com sucesso no dispositivo " + ip + 
+            Logger::log("Tarefa executada com sucesso no dispositivo " + ip +
                         (deviceName.empty() ? "" : " (" + deviceName + ")"));
         } else {
             std::cerr << RED "Erro ao executar o comando.\n" RESET;
@@ -120,16 +180,12 @@ int main() {
         client.disconnect();
         slowPrint("\nSessão encerrada.\n", 30);
 
-        // Pergunta ao usuário se deseja continuar
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // Limpa o buffer
-        std::cout << CYAN "Deseja realizar outra operação? (Y/N): " RESET;
-        std::cin >> continueRunning;
-
-        // Valida entrada
-        while (toupper(continueRunning) != 'Y' && toupper(continueRunning) != 'N') {
-            std::cout << RED "Entrada inválida. Por favor, insira 'Y' para continuar ou 'N' para sair: " RESET;
-            std::cin >> continueRunning;
-        }
+        // Pergunta se o usuário deseja continuar
+        continueRunning = getValidatedInput<char>(
+            CYAN "Deseja realizar outra operação? (Y/N): " RESET,
+            [](char value) { return toupper(value) == 'Y' || toupper(value) == 'N'; },
+            "Entrada inválida. Insira 'Y' para sim ou 'N' para não."
+        );
     }
 
     std::cout << GREEN "\nEncerrando o sistema. Obrigado por usar o programa!\n" RESET;
